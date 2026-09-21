@@ -5,6 +5,7 @@ import os
 import re
 from pathlib import Path
 from typing import Optional
+from profit import router as profit_router
 
 import joblib
 import requests
@@ -25,6 +26,7 @@ FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "")
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 app = FastAPI(title="KisanSaathi API", version="0.1.0")
+app.include_router(profit_router)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )

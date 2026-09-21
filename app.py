@@ -1,10 +1,10 @@
 """Bilingual (English / Hindi) Streamlit UI. Talks ONLY to the FastAPI backend.
 
-All fixed text (buttons, labels, tabs, table headers, crop names) comes from the
-TEXT dictionary below, so switching language costs ZERO AI requests.
-Only the diagnosis and advisory text written by Gemini uses the AI, and it is
-asked to reply in the selected language.
+All fixed text comes from the TEXT dictionary below, so switching language costs
+ZERO AI requests. Only the diagnosis and advisory text written by Gemini uses the AI.
 """
+import os
+
 import pandas as pd
 import requests
 import streamlit as st
@@ -23,7 +23,8 @@ TEXT = {
             "Delhi": "Delhi", "Lucknow": "Lucknow", "Ludhiana": "Ludhiana",
             "Pune": "Pune", "Hyderabad": "Hyderabad", "Custom": "Custom (enter yourself)",
         },
-        "tabs": ["1. Weather", "2. Crop recommendation", "3. Disease check", "4. Advisory"],
+        "tabs": ["1. Weather", "2. Crop recommendation", "3. Disease check",
+                 "4. Advisory", "5. Farm profit calculator"],
         # weather
         "get_forecast": "Get 7-day forecast",
         "temp_now": "Temperature now (°C)",
@@ -58,10 +59,42 @@ TEXT = {
         "adv_caption": "Uses your forecast, crop suggestions and diagnosis if you have run them.",
         "gen_adv": "Generate advisory",
         "writing": "Writing advisory...",
+        # profit
+        "p_caption": "Estimate your cost, production and profit. Change any number to match your own farm.",
+        "p_crop": "Crop",
+        "p_area": "Land area",
+        "p_unit": "Unit",
+        "units": {"acre": "Acre", "hectare": "Hectare", "bigha": "Bigha"},
+        "p_bigha": "1 bigha = how many acres? (varies by state)",
+        "p_yield": "Expected yield (quintal per acre)",
+        "p_price": "Expected selling price (₹ per quintal)",
+        "p_cost": "Total cost (₹ per acre)",
+        "p_items": "Enter costs item by item (optional)",
+        "p_items_help": "If you fill any of these (₹ per acre), their total is used instead of the box above.",
+        "items": {
+            "seed": "Seed", "fert": "Fertiliser", "pest": "Pesticide / medicine",
+            "labour": "Labour", "irrig": "Irrigation / water", "other": "Other (machines, rent, etc.)",
+        },
+        "p_using_items": "Using your itemised total: ₹{v:,.0f} per acre",
+        "p_calc": "Calculate profit",
+        "p_total_cost": "Total cost",
+        "p_revenue": "Expected income",
+        "p_profit": "Expected profit",
+        "p_scen_title": "What if things change?",
+        "scen": {"good": "Good season", "normal": "Normal season", "bad": "Bad season"},
+        "scen_cols": {
+            "name": "Scenario", "production_qtl": "Production (quintal)",
+            "revenue": "Income (₹)", "profit": "Profit (₹)",
+            "profit_per_acre": "Profit per acre (₹)", "roi_pct": "Return on cost (%)",
+        },
+        "p_be_price": "Break-even price: you need at least ₹{v:,.0f} per quintal to cover your cost.",
+        "p_be_yield": "Break-even yield: you need at least {v:,.1f} quintal per acre at this price.",
+        "p_loss": "At these numbers the normal season shows a loss. Recheck costs, price, or crop.",
+        "p_disclaimer": "This is only an estimate. Real results depend on weather, pests, market prices and your actual costs. Default numbers are approximate; replace them with your local figures.",
         # errors
         "no_backend": "Cannot reach the backend at {api}. Is it running?",
         "err": "Error {code}",
-        "crops": {},
+        "crops": {"wheat": "Wheat"},
     },
     "hi": {
         "title": "🌾 किसानसाथी: AI खेती सहायक",
@@ -73,7 +106,7 @@ TEXT = {
             "Delhi": "दिल्ली", "Lucknow": "लखनऊ", "Ludhiana": "लुधियाना",
             "Pune": "पुणे", "Hyderabad": "हैदराबाद", "Custom": "अन्य (स्वयं दर्ज करें)",
         },
-        "tabs": ["1. मौसम", "2. फसल सुझाव", "3. रोग जाँच", "4. सलाह"],
+        "tabs": ["1. मौसम", "2. फसल सुझाव", "3. रोग जाँच", "4. सलाह", "5. खेती का हिसाब"],
         "get_forecast": "7 दिन का पूर्वानुमान देखें",
         "temp_now": "अभी का तापमान (°C)",
         "hum_now": "अभी की नमी (%)",
@@ -104,6 +137,38 @@ TEXT = {
         "adv_caption": "अगर आपने मौसम, फसल सुझाव और रोग जाँच चलाई है तो सलाह में उनका उपयोग होता है।",
         "gen_adv": "सलाह बनाएँ",
         "writing": "सलाह तैयार हो रही है...",
+        # profit
+        "p_caption": "अपनी लागत, उत्पादन और मुनाफ़े का अनुमान लगाएँ। अपने खेत के हिसाब से कोई भी संख्या बदल सकते हैं।",
+        "p_crop": "फसल",
+        "p_area": "ज़मीन का क्षेत्रफल",
+        "p_unit": "इकाई",
+        "units": {"acre": "एकड़", "hectare": "हेक्टेयर", "bigha": "बीघा"},
+        "p_bigha": "1 बीघा = कितने एकड़? (राज्य के अनुसार बदलता है)",
+        "p_yield": "अनुमानित उपज (क्विंटल प्रति एकड़)",
+        "p_price": "अनुमानित बिक्री भाव (₹ प्रति क्विंटल)",
+        "p_cost": "कुल लागत (₹ प्रति एकड़)",
+        "p_items": "खर्च मद-वार भरें (वैकल्पिक)",
+        "p_items_help": "इनमें से कुछ भी भरने पर ऊपर वाले बॉक्स की जगह इनका कुल जोड़ (₹ प्रति एकड़) इस्तेमाल होगा।",
+        "items": {
+            "seed": "बीज", "fert": "खाद", "pest": "कीटनाशक / दवा",
+            "labour": "मज़दूरी", "irrig": "सिंचाई / पानी", "other": "अन्य (मशीन, किराया आदि)",
+        },
+        "p_using_items": "आपके मद-वार खर्च का कुल जोड़ इस्तेमाल हो रहा है: ₹{v:,.0f} प्रति एकड़",
+        "p_calc": "मुनाफ़ा निकालें",
+        "p_total_cost": "कुल लागत",
+        "p_revenue": "अनुमानित आमदनी",
+        "p_profit": "अनुमानित मुनाफ़ा",
+        "p_scen_title": "अगर हालात बदल जाएँ तो?",
+        "scen": {"good": "अच्छा मौसम", "normal": "सामान्य मौसम", "bad": "खराब मौसम"},
+        "scen_cols": {
+            "name": "स्थिति", "production_qtl": "उत्पादन (क्विंटल)",
+            "revenue": "आमदनी (₹)", "profit": "मुनाफ़ा (₹)",
+            "profit_per_acre": "प्रति एकड़ मुनाफ़ा (₹)", "roi_pct": "लागत पर लाभ (%)",
+        },
+        "p_be_price": "बराबरी का भाव: लागत निकालने के लिए कम से कम ₹{v:,.0f} प्रति क्विंटल चाहिए।",
+        "p_be_yield": "बराबरी की उपज: इस भाव पर कम से कम {v:,.1f} क्विंटल प्रति एकड़ चाहिए।",
+        "p_loss": "इन संख्याओं पर सामान्य मौसम में भी नुकसान दिख रहा है। लागत, भाव या फसल दोबारा जाँचें।",
+        "p_disclaimer": "यह केवल एक अनुमान है। असली नतीजे मौसम, कीट-रोग, बाज़ार भाव और आपकी असली लागत पर निर्भर करते हैं। शुरुआती संख्याएँ लगभग हैं; अपने इलाके के आँकड़े डालें।",
         "no_backend": "{api} पर बैकएंड से संपर्क नहीं हो पा रहा। क्या वह चालू है?",
         "err": "त्रुटि {code}",
         "crops": {
@@ -112,7 +177,7 @@ TEXT = {
             "lentil": "मसूर", "pomegranate": "अनार", "banana": "केला", "mango": "आम",
             "grapes": "अंगूर", "watermelon": "तरबूज", "muskmelon": "खरबूजा", "apple": "सेब",
             "orange": "संतरा", "papaya": "पपीता", "coconut": "नारियल", "cotton": "कपास",
-            "jute": "जूट", "coffee": "कॉफ़ी",
+            "jute": "जूट", "coffee": "कॉफ़ी", "wheat": "गेहूँ",
         },
     },
 }
@@ -133,8 +198,14 @@ def level_label(value) -> str:
     return TR["levels"].get(str(value).lower(), value)
 
 
+def money(x) -> str:
+    return f"₹{x:,.0f}"
+
+
 st.title(TR["title"])
-API = st.sidebar.text_input(TR["backend_url"], "http://localhost:8000", key="api_url")
+API = st.sidebar.text_input(
+    TR["backend_url"], os.getenv("BACKEND_URL", "http://localhost:8000"), key="api_url"
+)
 
 PLACES = {
     "Delhi": (28.61, 77.21),
@@ -154,7 +225,7 @@ else:
     lat, lon = PLACES[place]
 
 ss = st.session_state
-for k in ("weather", "recs", "diagnosis"):
+for k in ("weather", "recs", "diagnosis", "econ", "profit"):
     ss.setdefault(k, None)
 
 
@@ -175,7 +246,7 @@ def call(method, path, **kwargs):
     return r.json()
 
 
-tab_w, tab_c, tab_d, tab_a = st.tabs(TR["tabs"])
+tab_w, tab_c, tab_d, tab_a, tab_p = st.tabs(TR["tabs"])
 
 # ------------------------------------------------------------------ weather
 with tab_w:
@@ -277,3 +348,86 @@ with tab_a:
             )
         if res:
             st.markdown(res["advisory"])
+
+# ------------------------------------------------------------------ profit
+with tab_p:
+    st.caption(TR["p_caption"])
+    if ss.econ is None:
+        ss.econ = call("GET", "/profit/crops")
+    econ = ss.econ
+    if econ:
+        crops = list(econ.keys())
+        start = 0
+        if ss.recs:  # pre-select the top recommended crop when we have numbers for it
+            top = ss.recs["recommendations"][0]["crop"].lower()
+            if top in crops:
+                start = crops.index(top)
+        crop = st.selectbox(TR["p_crop"], crops, index=start,
+                            format_func=crop_label, key="p_crop")
+        base = econ[crop]
+
+        u1, u2 = st.columns(2)
+        area_val = u1.number_input(TR["p_area"], 0.1, 10000.0, 1.0, key="p_area")
+        unit = u2.selectbox(TR["p_unit"], ["acre", "hectare", "bigha"],
+                            format_func=lambda u: TR["units"][u], key="p_unit")
+        if unit == "bigha":
+            bigha_acre = st.number_input(TR["p_bigha"], 0.05, 5.0, 0.62, key="p_bigha")
+            area_acres = area_val * bigha_acre
+        elif unit == "hectare":
+            area_acres = area_val * 2.471
+        else:
+            area_acres = area_val
+
+        v1, v2, v3 = st.columns(3)
+        y = v1.number_input(TR["p_yield"], 0.1, 500.0,
+                            float(base["yield_qtl_per_acre"]), key=f"p_yield_{crop}")
+        price = v2.number_input(TR["p_price"], 1.0, 1_000_000.0,
+                                float(base["price_per_qtl"]), key=f"p_price_{crop}")
+        cost_box = v3.number_input(TR["p_cost"], 0.0, 10_000_000.0,
+                                   float(base["cost_per_acre"]), key=f"p_cost_{crop}")
+
+        with st.expander(TR["p_items"]):
+            st.caption(TR["p_items_help"])
+            items = {
+                k: st.number_input(TR["items"][k], 0.0, 10_000_000.0, 0.0,
+                                   key=f"p_item_{k}_{crop}")
+                for k in ["seed", "fert", "pest", "labour", "irrig", "other"]
+            }
+        item_sum = sum(items.values())
+        cost_per_acre = item_sum if item_sum > 0 else cost_box
+        if item_sum > 0:
+            st.info(TR["p_using_items"].format(v=item_sum))
+
+        if st.button(TR["p_calc"], key="btn_profit"):
+            ss.profit = call(
+                "POST",
+                "/profit/estimate",
+                json={
+                    "area_acres": area_acres,
+                    "yield_qtl_per_acre": y,
+                    "price_per_qtl": price,
+                    "cost_per_acre": cost_per_acre,
+                },
+            )
+
+        r = ss.profit
+        if r:
+            normal = next(s for s in r["scenarios"] if s["name"] == "normal")
+            m1, m2, m3 = st.columns(3)
+            m1.metric(TR["p_total_cost"], money(r["total_cost"]))
+            m2.metric(TR["p_revenue"], money(normal["revenue"]))
+            m3.metric(TR["p_profit"], money(normal["profit"]),
+                      delta=f"{normal['roi_pct']:.0f}%")
+            if normal["profit"] < 0:
+                st.warning(TR["p_loss"])
+
+            st.subheader(TR["p_scen_title"])
+            sc = pd.DataFrame(r["scenarios"])
+            sc["name"] = sc["name"].map(TR["scen"])
+            st.dataframe(sc.rename(columns=TR["scen_cols"]))
+            st.bar_chart(pd.DataFrame(
+                {TR["scen_cols"]["profit"]: sc["profit"].values}, index=sc["name"].values
+            ))
+            st.write(TR["p_be_price"].format(v=r["break_even_price_per_qtl"]))
+            st.write(TR["p_be_yield"].format(v=r["break_even_yield_per_acre"]))
+        st.info(TR["p_disclaimer"])
